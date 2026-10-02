@@ -1,61 +1,48 @@
-import { BrowserRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
-import { Nav, NavLink } from '@/lib/ui/Nav';
+import { useState } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ArrowLeftRight, LineChart, History as HistoryIcon } from 'lucide-react';
+import { Nav, NavLink } from '@/lib/ui/Nav';
 import { WalletProvider } from '@/lib/wallet-context';
 import { WalletConnectButton } from '@/components/WalletConnectButton';
-import { SwapPage } from '@/pages/Swap';
-import { MarketsPage } from '@/pages/Markets';
-import { HistoryPage } from '@/pages/History';
+import { Swap } from '@/pages/Swap';
+import { Markets } from '@/pages/Markets';
+import { History } from '@/pages/History';
 
-function TopNav() {
-  const location = useLocation();
-  const navigate = useNavigate();
+type View = 'swap' | 'markets' | 'history';
 
-  const go = (path: string) => (e: React.MouseEvent) => {
-    e.preventDefault();
-    navigate(path);
-  };
-
-  return (
-    <Nav
-      brand={
-        <span className="font-semibold tracking-tight">
-          Veyra
-        </span>
-      }
-      actions={<WalletConnectButton />}
-    >
-      <NavLink href="/" active={location.pathname === '/'} onClick={go('/')}>
-        <ArrowLeftRight size={14} className="mr-2" />
-        Swap
-      </NavLink>
-      <NavLink href="/markets" active={location.pathname === '/markets'} onClick={go('/markets')}>
-        <LineChart size={14} className="mr-2" />
-        Markets
-      </NavLink>
-      <NavLink href="/history" active={location.pathname === '/history'} onClick={go('/history')}>
-        <HistoryIcon size={14} className="mr-2" />
-        History
-      </NavLink>
-    </Nav>
-  );
-}
+const queryClient = new QueryClient();
 
 export default function App() {
+  const [view, setView] = useState<View>('swap');
+
   return (
-    <WalletProvider>
-      <BrowserRouter>
+    <QueryClientProvider client={queryClient}>
+      <WalletProvider>
         <div className="min-h-screen">
-          <TopNav />
+          <Nav
+            brand={<span>Veyra</span>}
+            actions={<WalletConnectButton />}
+          >
+            <NavLink href="#" active={view === 'swap'} onClick={() => setView('swap')}>
+              <ArrowLeftRight size={14} className="mr-2" />
+              Swap
+            </NavLink>
+            <NavLink href="#" active={view === 'markets'} onClick={() => setView('markets')}>
+              <LineChart size={14} className="mr-2" />
+              Markets
+            </NavLink>
+            <NavLink href="#" active={view === 'history'} onClick={() => setView('history')}>
+              <HistoryIcon size={14} className="mr-2" />
+              History
+            </NavLink>
+          </Nav>
           <main className="py-8 md:py-12">
-            <Routes>
-              <Route path="/" element={<SwapPage />} />
-              <Route path="/markets" element={<MarketsPage />} />
-              <Route path="/history" element={<HistoryPage />} />
-            </Routes>
+            {view === 'swap' && <Swap />}
+            {view === 'markets' && <Markets />}
+            {view === 'history' && <History />}
           </main>
         </div>
-      </BrowserRouter>
-    </WalletProvider>
+      </WalletProvider>
+    </QueryClientProvider>
   );
 }

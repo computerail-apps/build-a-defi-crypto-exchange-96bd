@@ -49,29 +49,3 @@ export function getToken(symbol: string): Token {
   if (!t) throw new Error(`Unknown token ${symbol}`);
   return t;
 }
-
-// Reference USD prices used to derive realistic mock quotes/markets data.
-// Phase 2 replaces every consumer of this with live CoinGecko data.
-export const MOCK_USD_PRICES: Record<string, number> = {
-  ETH: 3450.32,
-  USDC: 1.0,
-  USDT: 1.0,
-  DAI: 1.0,
-  WBTC: 96200.15,
-};
-
-export const MOCK_24H_CHANGE: Record<string, number> = {
-  ETH: 2.41,
-  USDC: 0.01,
-  USDT: -0.02,
-  DAI: 0.0,
-  WBTC: 1.83,
-};
-
-export const MOCK_MARKET_CAP: Record<string, number> = {
-  ETH: 414_800_000_000,
-  USDC: 34_200_000_000,
-  USDT: 118_900_000_000,
-  DAI: 5_320_000_000,
-  WBTC: 14_760_000_000,
-};

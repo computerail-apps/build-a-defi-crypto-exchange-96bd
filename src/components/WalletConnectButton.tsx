@@ -1,50 +1,35 @@
+import { Wallet, LogOut, AlertTriangle } from 'lucide-react';
 import { Button } from '@/lib/ui/Button';
-import { Wallet, CircleCheck, LogOut } from 'lucide-react';
-import { useState } from 'react';
-import { useWallet, truncateAddress } from '@/lib/wallet-context';
+import { useWallet } from '@/lib/wallet-context';
+
+function shortAddress(addr: string): string {
+  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
 
 export function WalletConnectButton() {
-  const { connected, address, chainName, connect, disconnect } = useWallet();
-  const [open, setOpen] = useState(false);
+  const { address, connected, connecting, connect, disconnect, isWrongNetwork } = useWallet();
 
-  if (!connected || !address) {
+  if (!connected) {
     return (
-      <Button size="sm" onClick={connect}>
+      <Button size="sm" onClick={connect} disabled={connecting}>
         <Wallet size={16} />
-        Connect Wallet
+        {connecting ? 'Connecting…' : 'Connect Wallet'}
       </Button>
     );
   }
 
   return (
-    <div className="relative">
-      <Button size="sm" variant="outline" onClick={() => setOpen((o) => !o)}>
-        <CircleCheck size={16} className="text-success" />
-        <span className="font-mono text-small">{truncateAddress(address)}</span>
-      </Button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full z-50 mt-2 w-56 rounded-lg border border-border bg-surface-elevated p-3 shadow-elev-3 animate-in">
-            <div className="mb-2 space-y-0.5">
-              <div className="text-micro text-muted-foreground">{chainName}</div>
-              <div className="font-mono text-small text-foreground">{truncateAddress(address)}</div>
-            </div>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="w-full justify-start"
-              onClick={() => {
-                disconnect();
-                setOpen(false);
-              }}
-            >
-              <LogOut size={14} />
-              Disconnect
-            </Button>
-          </div>
-        </>
+    <div className="flex items-center gap-2">
+      {isWrongNetwork && (
+        <span className="inline-flex items-center gap-1 rounded-full border border-destructive/40 bg-destructive/10 px-2 py-1 text-micro text-destructive">
+          <AlertTriangle size={12} />
+          Wrong network
+        </span>
       )}
+      <Button variant="outline" size="sm" onClick={disconnect}>
+        <span className="font-mono tabular-nums">{shortAddress(address!)}</span>
+        <LogOut size={14} />
+      </Button>
     </div>
   );
 }

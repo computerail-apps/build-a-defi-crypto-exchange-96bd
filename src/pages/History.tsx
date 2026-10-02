@@ -1,16 +1,18 @@
 import { Container } from '@/lib/ui/Container';
 import { HistoryList } from '@/components/HistoryList';
 
-export function HistoryPage() {
+export function History() {
   return (
     <Container>
-      <div className="mb-8 space-y-2">
-        <h1 className="text-h1 text-foreground">Swap history</h1>
-        <p className="text-body text-muted-foreground">
-          Every swap you've executed through Veyra, with live status from Ethereum.
-        </p>
+      <div className="space-y-6">
+        <div className="space-y-2">
+          <h1 className="text-h1 text-foreground">Swap history</h1>
+          <p className="text-body text-muted-foreground">
+            Your completed swaps with real transaction hashes, linked to Etherscan.
+          </p>
+        </div>
+        <HistoryList />
       </div>
-      <HistoryList />
     </Container>
   );
 }

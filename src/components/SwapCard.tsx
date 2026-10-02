@@ -1,25 +1,16 @@
 import { useMemo, useState } from 'react';
-import { ArrowDown, Loader2, AlertTriangle, Wallet, Fuel } from 'lucide-react';
+import { ArrowDown, Loader2, AlertTriangle, Wallet, Fuel, CheckCircle2, ExternalLink } from 'lucide-react';
 import { Card, CardContent } from '@/lib/ui/Card';
 import { Button } from '@/lib/ui/Button';
 import { Alert, AlertTitle, AlertDescription } from '@/lib/ui/Alert';
 import { useAppData } from '@/lib/data';
 import { useWallet } from '@/lib/wallet-context';
-import { TOKENS, MOCK_USD_PRICES, getToken } from '@/lib/tokens';
+import { TOKENS } from '@/lib/tokens';
+import { getUsdPrice } from '@/lib/coingecko';
+import { getSwapQuote, getTokenBalance, executeSwap, publicClient, type QuoteResult } from '@/lib/uniswap';
+import { supabase } from '@/lib/supabase';
 import { TokenSelect, TokenIcon } from '@/components/TokenSelect';
 import { SlippageSettings } from '@/components/SlippageSettings';
-
-interface QuoteResult {
-  toAmount: number;
-  rate: number;
-  priceImpactPct: number;
-  minReceived: number;
-  gasEstimateUsd: number;
-}
-
-interface BalanceResult {
-  balance: number;
-}
 
 function formatAmount(n: number, maxDecimals = 6): string {
   if (!isFinite(n)) return '0';
@@ -27,12 +18,13 @@ function formatAmount(n: number, maxDecimals = 6): string {
 }
 
 export function SwapCard() {
-  const { connected, connect, address } = useWallet();
+  const { connected, connect, address, walletClient, isWrongNetwork, error: walletError } = useWallet();
   const [fromSymbol, setFromSymbol] = useState('ETH');
   const [toSymbol, setToSymbol] = useState('USDC');
   const [fromAmount, setFromAmount] = useState('1.0');
   const [slippage, setSlippage] = useState(0.5);
-  const [justSwapped, setJustSwapped] = useState<string | null>(null);
+  const [submitted, setSubmitted] = useState<{ hash: string; message: string } | null>(null);
+  const [executeError, setExecuteError] = useState<string | null>(null);
 
   const parsedAmount = parseFloat(fromAmount) || 0;
 
@@ -40,64 +32,100 @@ export function SwapCard() {
     data: quote,
     isLoading: quoteLoading,
     error: quoteError,
-  } = useAppData<QuoteResult>({
-    key: `quote:${fromSymbol}:${toSymbol}:${parsedAmount}`,
-    mock: (() => {
-      const fromPrice = MOCK_USD_PRICES[fromSymbol] ?? 1;
-      const toPrice = MOCK_USD_PRICES[toSymbol] ?? 1;
-      const rate = fromPrice / toPrice;
-      const toAmount = parsedAmount * rate * 0.997; // simulate pool fee
-      return {
-        toAmount,
-        rate,
-        priceImpactPct: 0.04,
-        minReceived: toAmount * (1 - slippage / 100),
-        gasEstimateUsd: 4.86,
-      };
-    })(),
+  } = useAppData<QuoteResult | null>({
+    key: `quote:${fromSymbol}:${toSymbol}:${parsedAmount}:${slippage}`,
+    mock: null,
     fetchLive: async () => {
-      throw new Error('not wired yet');
+      if (parsedAmount <= 0) throw new Error('Enter an amount to swap');
+      return getSwapQuote({ fromSymbol, toSymbol, amountIn: parsedAmount, slippagePct: slippage });
     },
   });
 
-  const { data: balance } = useAppData<BalanceResult>({
+  // Wallet token balance for the currently selected "from" asset, read live from RPC.
+  const { data: walletBalance } = useAppData<number | null>({
     key: `balance:${address ?? 'none'}:${fromSymbol}`,
-    mock: { balance: fromSymbol === 'ETH' ? 2.4821 : fromSymbol === 'WBTC' ? 0.0412 : 5230.18 },
+    mock: null,
     fetchLive: async () => {
-      throw new Error('not wired yet');
+      if (!address) return null;
+      return getTokenBalance(fromSymbol, address);
     },
   });
 
-  const fromUsd = parsedAmount * (MOCK_USD_PRICES[fromSymbol] ?? 0);
-  const toUsd = (quote?.toAmount ?? 0) * (MOCK_USD_PRICES[toSymbol] ?? 0);
+  const { data: fromUsdPrice } = useAppData<number | null>({
+    key: `usd:${fromSymbol}`,
+    mock: null,
+    fetchLive: () => getUsdPrice(fromSymbol),
+  });
+  const { data: toUsdPrice } = useAppData<number | null>({
+    key: `usd:${toSymbol}`,
+    mock: null,
+    fetchLive: () => getUsdPrice(toSymbol),
+  });
+
+  const fromUsd = parsedAmount * (fromUsdPrice ?? 0);
+  const toUsd = (quote?.toAmount ?? 0) * (toUsdPrice ?? 0);
 
   const disabledReason = useMemo(() => {
     if (!connected) return 'Connect your wallet to swap';
+    if (isWrongNetwork) return 'Switch your wallet to Ethereum Mainnet';
     if (parsedAmount <= 0) return 'Enter an amount to swap';
-    if (balance && parsedAmount > balance.balance) return `Insufficient ${fromSymbol} balance`;
+    if (walletBalance !== null && walletBalance !== undefined && parsedAmount > walletBalance) return `Insufficient ${fromSymbol} balance`;
     if (quoteLoading) return 'Fetching live quote…';
     if (quoteError) return 'No live quote available';
     if (!quote) return 'No live quote available';
     return null;
-  }, [connected, parsedAmount, balance, fromSymbol, quoteLoading, quoteError, quote]);
+  }, [connected, isWrongNetwork, parsedAmount, walletBalance, fromSymbol, quoteLoading, quoteError, quote]);
 
   const [executing, setExecuting] = useState(false);
 
   function handleFlip() {
     setFromSymbol(toSymbol);
     setToSymbol(fromSymbol);
+    setSubmitted(null);
+    setExecuteError(null);
   }
 
   async function handleSwap() {
-    if (disabledReason) return;
+    if (disabledReason || !quote || !walletClient || !address) return;
     setExecuting(true);
-    setJustSwapped(null);
+    setSubmitted(null);
+    setExecuteError(null);
     try {
-      // Phase 2 wires this to wagmi/viem: ERC-20 approve (if needed) then
-      // SwapRouter02.exactInputSingle, followed by a Supabase insert into
-      // swap_history once the receipt confirms.
-      await new Promise((resolve) => setTimeout(resolve, 900));
-      setJustSwapped(`Swap submitted: ${fromAmount} ${fromSymbol} → ${formatAmount(quote?.toAmount ?? 0)} ${toSymbol}`);
+      const hash = await executeSwap({
+        walletClient,
+        account: address,
+        fromSymbol,
+        toSymbol,
+        amountIn: parsedAmount,
+        minAmountOut: quote.minReceived,
+        fee: quote.fee,
+      });
+
+      await supabase.from('swap_history').insert({
+        tx_hash: hash,
+        from_token: fromSymbol,
+        to_token: toSymbol,
+        from_amount: parsedAmount,
+        to_amount: quote.toAmount,
+        status: 'pending',
+        wallet_address: address,
+      });
+
+      setSubmitted({ hash, message: `${fromAmount} ${fromSymbol} → ${formatAmount(quote.toAmount)} ${toSymbol}` });
+
+      publicClient
+        .waitForTransactionReceipt({ hash: hash as `0x${string}` })
+        .then(async (receipt) => {
+          await supabase
+            .from('swap_history')
+            .update({ status: receipt.status === 'success' ? 'confirmed' : 'failed' })
+            .eq('tx_hash', hash);
+        })
+        .catch(async () => {
+          await supabase.from('swap_history').update({ status: 'failed' }).eq('tx_hash', hash);
+        });
+    } catch (err) {
+      setExecuteError(err instanceof Error ? err.message : 'Swap failed');
     } finally {
       setExecuting(false);
     }
@@ -115,13 +143,13 @@ export function SwapCard() {
         <div className="rounded-2xl border border-border bg-surface p-4 transition-colors duration-150">
           <div className="mb-2 flex items-center justify-between text-micro text-muted-foreground">
             <span>You pay</span>
-            {connected && balance && (
+            {connected && walletBalance !== null && walletBalance !== undefined && (
               <button
                 type="button"
                 className="transition-colors duration-150 hover:text-foreground"
-                onClick={() => setFromAmount(String(balance.balance))}
+                onClick={() => setFromAmount(String(walletBalance))}
               >
-                Balance: <span className="font-mono tabular-nums">{formatAmount(balance.balance)}</span>
+                Balance: <span className="font-mono tabular-nums">{formatAmount(walletBalance)}</span>
               </button>
             )}
           </div>
@@ -186,7 +214,7 @@ export function SwapCard() {
           </div>
         )}
 
-        {quoteError && (
+        {quoteError && parsedAmount > 0 && (
           <Alert variant="destructive">
             <AlertTriangle size={16} />
             <AlertTitle>Quote unavailable</AlertTitle>
@@ -194,10 +222,40 @@ export function SwapCard() {
           </Alert>
         )}
 
-        {justSwapped && (
+        {executeError && (
+          <Alert variant="destructive">
+            <AlertTriangle size={16} />
+            <AlertTitle>Swap failed</AlertTitle>
+            <AlertDescription>{executeError}</AlertDescription>
+          </Alert>
+        )}
+
+        {walletError && (
+          <Alert variant="destructive">
+            <AlertTriangle size={16} />
+            <AlertTitle>Wallet error</AlertTitle>
+            <AlertDescription>{walletError}</AlertDescription>
+          </Alert>
+        )}
+
+        {submitted && (
           <Alert variant="default" className="border-success/40 bg-success/10">
+            <CheckCircle2 size={16} />
             <AlertTitle>Transaction submitted</AlertTitle>
-            <AlertDescription>{justSwapped}</AlertDescription>
+            <AlertDescription>
+              <div className="flex flex-col gap-1">
+                <span>{submitted.message}</span>
+                <a
+                  href={`https://etherscan.io/tx/${submitted.hash}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 font-mono text-micro text-primary transition-colors duration-150 hover:underline"
+                >
+                  {submitted.hash.slice(0, 10)}…{submitted.hash.slice(-8)}
+                  <ExternalLink size={12} />
+                </a>
+              </div>
+            </AlertDescription>
           </Alert>
         )}
 
